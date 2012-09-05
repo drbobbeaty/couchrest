@@ -20,7 +20,7 @@ Gem::Specification.new do |s|
     "README.md",
     "THANKS.md"
   ]
-  s.homepage = %q{http://github.com/couchrest/couchrest}
+  s.homepage = %q{http://github.com/drbobbeaty/couchrest}
   s.rdoc_options = ["--charset=UTF-8"]
   s.require_paths = ["lib"]
   s.rubygems_version = %q{1.3.7}
