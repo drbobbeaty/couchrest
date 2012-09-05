@@ -13,7 +13,7 @@ module CouchRest
     # server<CouchRest::Server>:: database host
     # name<String>:: database name
     #
-    def initialize(server, name)
+    def initialize(server, name, opts = {})
       @name = name
       @server = server
       @host = server.uri
@@ -22,6 +22,7 @@ module CouchRest
       @streamer = Streamer.new
       @bulk_save_cache = []
       @bulk_save_cache_limit = 500  # must be smaller than the uuid count
+      @options = opts
     end
 
     # == Database information and manipulation methods
@@ -33,17 +34,17 @@ module CouchRest
 
     # GET the database info from CouchDB
     def info
-      CouchRest.get @root
+      CouchRest.get(@root, @options)
     end
 
     # Compact the database, removing old document revisions and optimizing space use.
     def compact!
-      CouchRest.post "#{@root}/_compact"
+      CouchRest.post("#{@root}/_compact", @options)
     end
 
     # Create the database
     def create!
-      bool = server.create_db(@name) rescue false
+      bool = server.create_db(@name, @options) rescue false
       bool && true
     end
 
@@ -69,7 +70,7 @@ module CouchRest
     # DELETE the database itself. This is not undoable and could be rather
     # catastrophic. Use with care!
     def delete!
-      CouchRest.delete @root
+      CouchRest.delete(@root, @options)
     end
 
 
@@ -79,7 +80,7 @@ module CouchRest
     def get(id, params = {})
       slug = escape_docid(id)
       url = CouchRest.paramify_url("#{@root}/#{slug}", params)
-      result = CouchRest.get(url)
+      result = CouchRest.get(url, @options)
       return result unless result.is_a?(Hash)
       doc = if /^_design/ =~ result["_id"]
         Design.new(result)
@@ -127,18 +128,18 @@ module CouchRest
         begin
           uri = "#{@root}/#{slug}"
           uri << "?batch=ok" if batch
-          CouchRest.put uri, doc
+          CouchRest.put(uri, doc, @options)
         rescue RestClient::ResourceNotFound
           p "resource not found when saving even tho an id was passed"
           slug = doc['_id'] = @server.next_uuid
-          CouchRest.put "#{@root}/#{slug}", doc
+          CouchRest.put("#{@root}/#{slug}", doc, @options)
         end
       else
         begin
           slug = doc['_id'] = @server.next_uuid
-          CouchRest.put "#{@root}/#{slug}", doc
+          CouchRest.put("#{@root}/#{slug}", doc, @options)
         rescue #old version of couchdb
-          CouchRest.post @root, doc
+          CouchRest.post(@root, doc, @options)
         end
       end
       if result['ok']
@@ -168,7 +169,7 @@ module CouchRest
         docs = @bulk_save_cache
         @bulk_save_cache = []
       end
-      if (use_uuids) 
+      if (use_uuids)
         ids, noids = docs.partition{|d|d['_id']}
         uuid_count = [noids.length, @server.uuid_batch_count].max
         noids.each do |doc|
@@ -180,7 +181,7 @@ module CouchRest
       if all_or_nothing
         request_body[:all_or_nothing] = true
       end
-      CouchRest.post "#{@root}/_bulk_docs", request_body
+      CouchRest.post("#{@root}/_bulk_docs", request_body, @options)
     end
     alias :bulk_delete :bulk_save
 
@@ -196,8 +197,8 @@ module CouchRest
         return bulk_save if @bulk_save_cache.length >= @bulk_save_cache_limit
         return {'ok' => true} # Mimic the non-deferred version
       end
-      slug = escape_docid(doc['_id'])        
-      CouchRest.delete "#{@root}/#{slug}?rev=#{doc['_rev']}"
+      slug = escape_docid(doc['_id'])
+      CouchRest.delete("#{@root}/#{slug}?rev=#{doc['_rev']}", @options)
     end
 
     # COPY an existing document to a new id. If the destination id currently exists, a rev must be provided.
@@ -211,7 +212,7 @@ module CouchRest
       else
         dest
       end
-      CouchRest.copy "#{@root}/#{slug}", destination
+      CouchRest.copy("#{@root}/#{slug}", destination, @options)
     end
 
     # Updates the given doc by yielding the current state of the doc
@@ -226,7 +227,7 @@ module CouchRest
         doc = self.get(doc_id, params)
         yield doc
         begin
-          resp = self.save_doc doc
+          resp = self.save_doc(doc)
         rescue RestClient::RequestFailed => e
           if e.http_code == 409 # Update collision
             update_limit -= 1
@@ -251,7 +252,7 @@ module CouchRest
       payload['keys'] = params.delete(:keys) if params[:keys]
       # Try recognising the name, otherwise assume already prepared
       view_path = name_to_view_path(name)
-      url = CouchRest.paramify_url "#{@root}/#{view_path}", params
+      url = CouchRest.paramify_url("#{@root}/#{view_path}", params)
       if block_given?
         if !payload.empty?
           @streamer.post url, payload, &block
@@ -260,9 +261,9 @@ module CouchRest
         end
       else
         if !payload.empty?
-          CouchRest.post url, payload
+          CouchRest.post(url, payload, @options)
         else
-          CouchRest.get url
+          CouchRest.get(url, @options)
         end
       end
     end
@@ -311,14 +312,14 @@ module CouchRest
     # GET an attachment directly from CouchDB
     def fetch_attachment(doc, name)
       uri = url_for_attachment(doc, name)
-      CouchRest.get uri, :raw => true
+      CouchRest.get(uri, @options.merge(:raw => true))
     end
 
     # PUT an attachment directly to CouchDB
     def put_attachment(doc, name, file, options = {})
       docid = escape_docid(doc['_id'])
       uri = url_for_attachment(doc, name)
-      CouchRest.put(uri, file, options.merge(:raw => true))
+      CouchRest.put(uri, file, @options.merge(options).merge(:raw => true))
     end
 
     # DELETE an attachment directly from CouchDB
@@ -326,13 +327,13 @@ module CouchRest
       uri = url_for_attachment(doc, name)
       # this needs a rev
       begin
-        CouchRest.delete(uri)
+        CouchRest.delete(uri, @options)
       rescue Exception => error
         if force
           # get over a 409
           doc = get(doc['_id'])
           uri = url_for_attachment(doc, name)
-          CouchRest.delete(uri)
+          CouchRest.delete(uri, @options)
         else
           error
         end
@@ -355,7 +356,7 @@ module CouchRest
       end
       payload['continuous'] = continuous
       payload['doc_ids'] = doc_ids if doc_ids
-      CouchRest.post "#{@host}/_replicate", payload
+      CouchRest.post("#{@host}/_replicate", payload, @options)
     end
 
     def uri_for_attachment(doc, name)
@@ -378,7 +379,7 @@ module CouchRest
     end
 
     def escape_docid id
-      /^_design\/(.*)/ =~ id ? "_design/#{CGI.escape($1)}" : CGI.escape(id) 
+      /^_design\/(.*)/ =~ id ? "_design/#{CGI.escape($1)}" : CGI.escape(id)
     end
 
     def encode_attachments(attachments)

@@ -43,15 +43,15 @@ module CouchRest
   # the get, post, put, delete and copy
   CouchRest.extend(::CouchRest::RestAPI)
 
-  # The CouchRest module methods handle the basic JSON serialization 
+  # The CouchRest module methods handle the basic JSON serialization
   # and deserialization, as well as query parameters. The module also includes
   # some helpers for tasks like instantiating a new Database or Server instance.
   class << self
 
     # todo, make this parse the url and instantiate a Server or Database instance
     # depending on the specificity.
-    def new(*opts)
-      Server.new(*opts)
+    def new(server, *opts)
+      Server.new(server, *opts)
     end
 
     def parse url
@@ -89,26 +89,26 @@ module CouchRest
     end
 
     # set proxy to use
-    def proxy url
+    def proxy(url, *opts)
       RestClient.proxy = url
     end
 
     # ensure that a database exists
     # creates it if it isn't already there
     # returns it after it's been created
-    def database! url
-      parsed = parse url
+    def database!(url, options = {})
+      parsed = parse(url)
       cr = CouchRest.new(parsed[:host])
-      cr.database!(parsed[:database])
+      cr.database!(parsed[:database], options)
     end
 
-    def database url
-      parsed = parse url
+    def database(url, options = {})
+      parsed = parse(url)
       cr = CouchRest.new(parsed[:host])
-      cr.database(parsed[:database])
+      cr.database(parsed[:database], options)
     end
 
-    def paramify_url url, params = {}
+    def paramify_url(url, params = {})
       if params && !params.empty?
         query = params.collect do |k,v|
           v = MultiJson.encode(v) if %w{key startkey endkey}.include?(k.to_s)
